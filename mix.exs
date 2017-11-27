@@ -2,7 +2,7 @@ defmodule HPDF.Mixfile do
   @moduledoc false
   use Mix.Project
 
-  @version "0.1.0"
+  @version "0.2.0"
   @url "https://github.com/hassox/hpdf"
   @maintainers [
     "Daniel Neighman",
@@ -52,7 +52,8 @@ defmodule HPDF.Mixfile do
     [{:socket, "~> 0.3.12"},
      {:httpotion, "~> 3.0.1"},
      {:uuid, "~>1.1"},
-     {:poison, "~> 3.1.0" }
+     {:poison, "~> 3.1.0" },
+     {:ex_doc, ">= 0.0.0", only: :dev},
     ]
   end
 

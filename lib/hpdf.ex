@@ -84,6 +84,7 @@ defmodule HPDF do
   * `page_headers` - A map of headers to supply to the page
   * `include_headers_on_same_domain` - A bool. Default True. If true, all requests to the same domain will include the same headers as the main page
   * `print_options` - A map of options to the print method. See https://chromedevtools.github.io/devtools-protocol/tot/Page/#method-printToPDF
+  * `max_wait_time` - The maximum amount of time to wait for loading before printing in miliseconds.
   """
   def print_pdf!(url, options \\ []) do
     HPDF.Controller.print_pdf!(url, options)

@@ -16,7 +16,7 @@ defmodule HPDF.Printer do
 
   require Logger
 
-  @pdf_req_id 42
+  @pdf_req_id 420420
   @default_timeout 5_000
 
   # setting a cookie. The cookie value should describe
@@ -31,10 +31,14 @@ defmodule HPDF.Printer do
             page_loaded?: false,
             page_headers: nil, # Page headers will be included on the initial page load
             include_headers_on_same_domain: true, # if set to true, any headers that were given for the original page will also be used on requests on the same domain
+            print_timer: nil,
+            max_wait_time: nil,
             timer: nil, # private
             reply_to: nil, # private
             print_options: %{}, # options for printing https://chromedevtools.github.io/devtools-protocol/tot/Page/#method-printToPDF
-            page_frame: nil # an id that chrome is using for the frame
+            page_frame: nil, # an id that chrome is using for the frame
+            req_count: 1,
+            canceled: false
 
 
   @doc false
@@ -45,6 +49,7 @@ defmodule HPDF.Printer do
     headers = Keyword.get(args, :page_headers)
     cookie = Keyword.get(args, :cookie)
     print_options = Keyword.get(args, :print_options, %{})
+    max_wait_time = Keyword.get(args, :max_wait_time)
     headers =
       if headers do
         for {k, v} <- headers, into: %{}, do: {to_string(k), v}
@@ -61,7 +66,8 @@ defmodule HPDF.Printer do
         include_headers_on_same_domain: on_same_domain,
         cookie: cookie,
         print_options: print_options,
-        page_frame: nil
+        page_frame: nil,
+        max_wait_time: max_wait_time,
       }
 
     {:ok, state}
@@ -88,7 +94,6 @@ defmodule HPDF.Printer do
   end
 
   def handle_connect(state) do
-    Logger.debug("HPDF Printer Connected")
     {:noreply, state}
   end
 
@@ -102,8 +107,12 @@ defmodule HPDF.Printer do
     end
 
     method(state.socket, "Page.navigate", %{url: url}, 3)
+    print_timer =
+      if state.max_wait_time do
+        Process.send_after(self(), {:override_print_page}, state.max_wait_time)
+      end
 
-    {:noreply, %{state | reply_to: from, page_url: url}}
+    {:noreply, %{state | reply_to: from, page_url: url, print_timer: print_timer}}
   end
 
   def handle_frame({:text, %{"id" => @pdf_req_id, "result" => %{ "data" => pdf_data}}}, state) do
@@ -111,7 +120,13 @@ defmodule HPDF.Printer do
     {:stop, :normal, state}
   end
 
-  def handle_frame({:text, %{"error" => %{"message" => msg}}}, state) do
+  def handle_frame({:text, %{"error" => %{"message" => "Invalid InterceptionId."}}}, state) do
+    # intercepted requests that have been canceled will error
+    {:noreply, state}
+  end
+
+  def handle_frame({:text, %{"error" => %{"message" => msg}}} = frame, state) do
+    log_debug(inspect(frame))
     GenServer.reply(state.reply_to, {:error, :page_error, msg})
     {:stop, :normal, state}
   end
@@ -142,37 +157,31 @@ defmodule HPDF.Printer do
     }} = frame,
     %{page_url: url} = state
   ) when not (status in (200..299)) do
-    Logger.debug("not a 200: #{inspect(frame)}")
+    log_debug("not a 200: #{inspect(frame)}")
     GenServer.reply(state.reply_to, {:error, :page_load_failure, status})
     {:stop, :normal, state}
   end
 
   def handle_frame(
-    {:text, %{"method" => "Network.requestWillBeSent"}} = frame,
-    %{timer: timer, active_requests: count} = state
+    {:text, %{"method" => "Network.requestWillBeSent"}},
+    %{timer: timer} = state
   ) do
-    Logger.debug(inspect(frame))
     if timer do
-      Logger.debug("Cancelling HPDF printer timer #{count}")
       Process.cancel_timer(timer)
     end
     {:noreply, %{state | active_requests: state.active_requests + 1, timer: nil}}
   end
 
   def handle_frame(
-    {:text, %{"method" => "Network.responseReceived"}} = frame,
+    {:text, %{"method" => "Network.responseReceived"}},
     %{timer: timer, active_requests: count} = state
   ) do
-    Logger.debug("FRAME: #{inspect(frame)}")
     if timer do
-      Logger.debug("Canceling HPDF printer timer #{count}")
       Process.cancel_timer(timer)
     end
 
-    Logger.debug("Maybe start the timer? #{inspect(state.page_loaded?)} #{count}")
     new_timer =
       if state.page_loaded? && count <= 1 do
-        Logger.debug("Restarting HPDF printer timer")
         Process.send_after(self(), {:print_page}, state.after_load_delay)
       end
 
@@ -195,14 +204,14 @@ defmodule HPDF.Printer do
       state.socket,
       "Network.continueInterceptedRequest",
       %{"headers" => updated_headers, "interceptionId" => interception_id},
-      67
+      state.req_count
     )
-    {:noreply, state}
+    {:noreply, %{state | req_count: state.req_count + 1}}
   end
 
-  def handle_frame({:text, %{"method" => "Page.frameStoppedLoading"}} = frame, state) do
-    Logger.debug("STOPPED LOADING #{inspect(frame)}")
-    Logger.debug("HPDF Page downloaded - Starting the timer #{state.after_load_delay} (#{state.active_requests})")
+  def handle_frame({:text, %{"method" => "Page.frameStoppedLoading"}}, state) do
+    if state.timer, do: Process.cancel_timer(state.timer)
+
     timer =
       if state.active_requests <= 1 do
         Process.send_after(self(), {:print_page}, state.after_load_delay)
@@ -211,34 +220,39 @@ defmodule HPDF.Printer do
   end
 
   def handle_frame({:text, %{"method" => "Inspector.targetCrashed"}} = frame, state) do
-    Logger.debug("Inspector crashed: #{inspect(frame)}")
+    log_debug("Inspector crashed: #{inspect(frame)}")
     GenServer.reply(state.reply_to, {:error, :crashed, :crashed})
     {:stop, :abnormal, state}
   end
 
-  def handle_frame(frame, state) do
-    Logger.debug("HPDF: Unknown Frame: #{inspect(frame)}")
+  def handle_frame(_frame, state) do
     {:noreply, state}
+  end
+
+  def handle_info({:override_print_page}, state) do
+    method(state.socket, "Page.stopLoading", %{}, 999)
+    send(self(), {:print_page})
+    {:noreply, %{state | canceled: true}}
   end
 
   def handle_info({:print_page}, state) do
-    Logger.debug("HPDF printing the PDF")
+    if state.timer, do: Process.cancel_timer(state.timer)
+    if state.print_timer, do: Process.cancel_timer(state.print_timer)
+
     method(state.socket, "Page.printToPDF", state.print_options, @pdf_req_id)
-    {:noreply, state}
+    {:noreply, %{state | timer: nil, print_timer: nil}}
   end
 
-  def handle_info(msg, state) do
-    Logger.debug("Unknown state #{inspect msg}", state)
+  def handle_info(_msg, state) do
     {:noreply, state}
   end
 
   def handle_error(reason, state) do
-    Logger.debug("HPDF Error: #{inspect(reason)}")
+    log_debug("HPDF Error: #{inspect(reason)}")
     {:noreply, state}
   end
 
-  def handle_close(reason, state) do
-    Logger.warn("HPDF printer close #{inspect(reason)}")
+  def handle_close(_reason, state) do
     {:noreply, state}
   end
 
@@ -289,5 +303,9 @@ defmodule HPDF.Printer do
 
   defp updated_headers_for_request(%{"headers" => req_headers}, _) do
     req_headers
+  end
+
+  defp log_debug(message) do
+    Logger.debug(message)
   end
 end

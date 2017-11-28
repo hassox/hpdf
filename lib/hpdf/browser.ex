@@ -127,12 +127,9 @@ defmodule HPDF.Browser do
   end
 
   def handle_frame(
-    {:text,
-    %{"id" => session_id, "result" => %{"targetId" => page_id}}
-    } = frame,
+    {:text, %{"id" => session_id, "result" => %{"targetId" => page_id}}},
     %{sessions: sessions} = state
   ) do
-    Logger.debug("FRAME: #{inspect frame}")
     session = Map.get(sessions, session_id)
     session = %{session | page_id: page_id,
                           page_ws_uri: page_ws_address(state, page_id)}
@@ -143,8 +140,7 @@ defmodule HPDF.Browser do
     {:noreply, new_state}
   end
 
-  def handle_frame(frame, state) do
-    Logger.debug("FRAME: #{inspect frame}")
+  def handle_frame(_frame, state) do
     {:noreply, state}
   end
 
@@ -207,7 +203,6 @@ defmodule HPDF.Browser do
 
   defp method(socket, meth, params, id) do
     args = %{method: meth, id: id, params: params}
-    Logger.debug("Sending method: #{args |> inspect}")
     Socket.Web.send(socket, {:text, Poison.encode!(args)})
   end
 end

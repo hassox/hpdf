@@ -2,7 +2,7 @@ defmodule HPDF.Mixfile do
   @moduledoc false
   use Mix.Project
 
-  @version "0.3.0"
+  @version "0.3.1"
   @url "https://github.com/hassox/hpdf"
   @maintainers [
     "Daniel Neighman",

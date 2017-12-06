@@ -26,7 +26,7 @@ docker run -d -p 9222:9222 --cap-add=SYS_ADMIN justinribeiro/chrome-headless
 ### Example
 
 ```elixir
-case HPDF.print_page!(my_url, timeout: 30_000) do
+case HPDF.print_pdf!(my_url, timeout: 30_000) do
   {:ok, pdf_data} -> do_stuff_with_the_pdf_binary_data(pdf_data)
   {:error, error_type, reason} -> #Handle error
   {:error, reason} -> # Handle error
@@ -49,7 +49,7 @@ Assuming you have a token
 header_value = get_my_auth_header()
 headers = %{"authorization" => header_value}
 
-case HPDF.print_page!(my_url, timeout: 30_000, page_headers: headers) do
+case HPDF.print_pdf!(my_url, timeout: 30_000, page_headers: headers) do
   {:ok, pdf_data} -> do_stuff_with_the_pdf_binary_data(pdf_data)
   {:error, error_type, reason} -> #Handle error
   {:error, reason} -> # Handle error
@@ -85,7 +85,7 @@ The HPDF.Application must be running before calling this function
 * `page_headers` - A map of headers to supply to the page
 * `include_headers_on_same_domain` - A bool. Default True. If true, all requests to the same domain will include the same headers as the main page
 * `print_options` - A map of options to the print method. See https://chromedevtools.github.io/devtools-protocol/tot/Page/#method-printToPDF
-
+* `max_wait_time` - A time in miliseconds after which the page will be forcefully printed even if there are outstanding requests
 
 ## Installation
 
@@ -94,7 +94,7 @@ by adding `hpdf` to your list of dependencies in `mix.exs`:
 
 ```elixir
 def deps do
-  [{:hpdf, "~> 0.1.0"}]
+  [{:hpdf, "~> 0.3.1"}]
 end
 
 def application do

@@ -139,7 +139,7 @@ defmodule HPDF.Printer do
     {:text,
     %{"method" => "Network.requestWillBeSent",
       "params" => %{"frameId" => frameId, "redirectResponse" => %{}, "request" => %{"url" => redirectURL}},
-    }}, state)
+    }}, %{page_url: redirectURL} = state)
   do
     if frameId == state.page_frame do
       GenServer.reply(state.reply_to, {:error, :page_redirected, redirectURL})
